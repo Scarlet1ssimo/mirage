@@ -22,6 +22,7 @@ MAX_THREADS = os.cpu_count()
 HARD_CODE = """
 #include <Python.h>
 #include <cuda_runtime.h>
+#include <vector>
 
 static PyObject *launch(PyObject *self, PyObject *args) {
   PyObject *input_list, *output_list, *py_buffer, *py_stream, *py_profiler_buffer;
@@ -437,6 +438,17 @@ class KNGraph:
             profiling=profiling,
             enable_online_softmax=enable_online_softmax,
         )
+        if result.get("error_type", 0) != 0 or not result.get("code"):
+            self._is_compiled = True
+            self._valid_cuda_kernels = False
+            self._cached_results = None
+            self._error_message = (
+                "Transpiler failed with error_type={} for target_cc={}"
+            ).format(result.get("error_type"), target_cc)
+            if async_:
+                return Handle([], None)
+            return None
+
         if result["max_smem_size"] > get_shared_memory_capacity(target_cc):
             # the transpiled kernel exceeds shared memory limit
             print(
@@ -594,103 +606,106 @@ class KNGraph:
         all_graphs = [KNGraph(g) for g in cygraphs]
         print("Finished search, discovering {} mugraphs ...".format(len(all_graphs)))
         if backend == "cuda":
-            # profile and use the best graph
-            best_graph, best_perf = None, float("inf")
+            # --- Helper functions to avoid code duplication ---
+            def _make_input_tensors(g):
+                """Create random input tensors matching a graph's input specs."""
+                input_tensors = []
+                for t in g.cygraph.get_input_dtensors():
+                    dims, strides = g.cygraph.get_input_dtensor_shape_and_stride(t)
+                    dtype = convert_dtype_to_torch_type(t.dtype)
+                    x = torch.randn(
+                        dims, dtype=dtype,
+                        device="cuda:{}".format(global_config.gpu_device_id),
+                    )
+                    input_tensors.append(torch.as_strided(x, size=dims, stride=strides))
+                return input_tensors
+
+            def _compile_graphs_async(graphs, handles, **compile_kwargs):
+                """Compile a list of graphs asynchronously."""
+                for g in graphs:
+                    input_tensors = _make_input_tensors(g)
+                    if len(handles) == MAX_THREADS:
+                        handles.popleft().wait()
+                    handle = g.compile(async_=True, inputs=input_tensors, **compile_kwargs)
+                    handles.append(handle)
+
+            def _profile_graphs(graphs, warmup_iters, profile_iters, label=""):
+                """Profile compiled graphs; return (best_graph, best_perf)."""
+                best_graph, best_perf = None, float("inf")
+                for idx, g in enumerate(graphs):
+                    if not g.valid_kernels():
+                        print("muGraph {}{}: {}".format(idx, label, g.get_error_message()))
+                        continue
+                    input_tensors = _make_input_tensors(g)
+                    for _ in range(warmup_iters):
+                        g(inputs=input_tensors)
+                    torch.cuda.synchronize()
+                    starter = torch.cuda.Event(enable_timing=True)
+                    ender = torch.cuda.Event(enable_timing=True)
+                    starter.record()
+                    for _ in range(profile_iters):
+                        g(inputs=input_tensors)
+                    ender.record()
+                    torch.cuda.synchronize()
+                    perf = starter.elapsed_time(ender) / profile_iters
+                    print("muGraph {}{}: profiled performance (ms) = {}".format(idx, label, perf))
+                    if perf < best_perf:
+                        best_graph, best_perf = g, perf
+                return best_graph, best_perf
+
+            # --- Main compilation and profiling logic ---
             print("Transpiling {} muGraphs ...".format(len(all_graphs)))
             handles = deque()
-
             target_cc = (
                 torch.cuda.get_device_properties(0).major * 10
                 + torch.cuda.get_device_properties(0).minor
             )
+
             if target_cc >= 90:
-                pipeline_stages_list = [2, 3, 4]
-                num_warp_groups_list = [2, 3, 4]
-                for idx, g in enumerate(all_graphs):
-                    for pipeline_stages in pipeline_stages_list:
-                        for num_warp_groups in num_warp_groups_list:
-                            dtensors = g.cygraph.get_input_dtensors()
-                            input_tensors = list()
-                            for t in dtensors:
-                                dims, strides = (
-                                    g.cygraph.get_input_dtensor_shape_and_stride(t)
-                                )
-                                dtype = convert_dtype_to_torch_type(t.dtype)
-                                x = torch.randn(
-                                    dims,
-                                    dtype=dtype,
-                                    device="cuda:{}".format(
-                                        global_config.gpu_device_id
-                                    ),
-                                )
-                                x = torch.as_strided(x, size=dims, stride=strides)
-                                input_tensors.append(x)
-                            starter = torch.cuda.Event(enable_timing=True)
-                            ender = torch.cuda.Event(enable_timing=True)
-                            new_g = g
+                for g in all_graphs:
+                    for pipeline_stages in [2, 3, 4]:
+                        for num_warp_groups in [2, 3, 4]:
+                            input_tensors = _make_input_tensors(g)
                             if len(handles) == MAX_THREADS:
                                 handles.popleft().wait()
-                            handle = new_g.compile(
-                                async_=True,
-                                inputs=input_tensors,
+                            handle = g.compile(
+                                async_=True, inputs=input_tensors,
                                 pipeline_stages=pipeline_stages,
                                 num_warp_groups=num_warp_groups,
                             )
                             handles.append(handle)
             else:
-                for idx, g in enumerate(all_graphs):
-                    dtensors = g.cygraph.get_input_dtensors()
-                    input_tensors = list()
-                    for t in dtensors:
-                        dims, strides = g.cygraph.get_input_dtensor_shape_and_stride(t)
-                        # dims = [t.dim(i) for i in range(t.num_dims)]
-                        dtype = convert_dtype_to_torch_type(t.dtype)
-                        x = torch.randn(
-                            dims,
-                            dtype=dtype,
-                            device="cuda:{}".format(global_config.gpu_device_id),
-                        )
-                        x = torch.as_strided(x, size=dims, stride=strides)
-                        input_tensors.append(x)
-                    starter = torch.cuda.Event(enable_timing=True)
-                    ender = torch.cuda.Event(enable_timing=True)
-                    if len(handles) == MAX_THREADS:
-                        handles.popleft().wait()
-                    handle = g.compile(async_=True, inputs=input_tensors)
-                    handles.append(handle)
+                _compile_graphs_async(all_graphs, handles)
+
             while handles:
                 handles.popleft().wait()
-            for idx, g in enumerate(all_graphs):
-                dtensors = g.cygraph.get_input_dtensors()
-                input_tensors = list()
-                for t in dtensors:
-                    dims, strides = g.cygraph.get_input_dtensor_shape_and_stride(t)
-                    dtype = convert_dtype_to_torch_type(t.dtype)
-                    x = torch.randn(
-                        dims,
-                        dtype=dtype,
-                        device="cuda:{}".format(global_config.gpu_device_id),
-                    )
-                    x = torch.as_strided(x, size=dims, stride=strides)
-                    input_tensors.append(x)
-                starter = torch.cuda.Event(enable_timing=True)
-                ender = torch.cuda.Event(enable_timing=True)
-                if not g.valid_kernels():
-                    print("muGraph {}: {}".format(idx, g.get_error_message()))
-                    continue
-                # Warmup runs
-                for _ in range(warmup_iters):
-                    g(inputs=input_tensors)
-                torch.cuda.synchronize()
-                starter.record()
-                for _ in range(profile_iters):
-                    g(inputs=input_tensors)
-                ender.record()
-                torch.cuda.synchronize()
-                perf = starter.elapsed_time(ender) / profile_iters
-                print("muGraph {}: profiled performance (ms) = {}".format(idx, perf))
-                if perf < best_perf:
-                    best_graph, best_perf = g, perf
+
+            best_graph, best_perf = _profile_graphs(
+                all_graphs, warmup_iters, profile_iters
+            )
+
+            # Fallback: if all Hopper compilations failed, retry with Ampere path.
+            # This is useful when Hopper codegen cannot produce a valid kernel
+            # for a specific graph but the Ampere path still works.
+            if best_graph is None and target_cc >= 90:
+                print(
+                    "All Hopper transpilations failed, falling back to Ampere codegen path..."
+                )
+                fallback_graphs = [KNGraph(g_cy) for g_cy in cygraphs]
+                _compile_graphs_async(fallback_graphs, handles, target_cc=80)
+                while handles:
+                    handles.popleft().wait()
+                best_graph, best_perf = _profile_graphs(
+                    fallback_graphs,
+                    warmup_iters,
+                    profile_iters,
+                    label=" (Ampere fallback)",
+                )
+
+            if best_graph is None:
+                raise RuntimeError(
+                    "All muGraph compilations failed. No valid kernel could be generated."
+                )
             best_graph.backend = "cuda"
             if use_graph_dataset:
                 graph_dataset.store(

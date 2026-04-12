@@ -346,12 +346,17 @@ TritonCustomOPTranspileResult
         tb::STensor const &output = tb_op->output_tensors.at(0);
         assert(input.num_dims == output.num_dims);
 
-        string op_str = operator_type_to_triton(tb_op->op_type);
-
-        code.e("$ = $($)",
-               fmt("stensor$", output.guid),
-               op_str,
-               fmt("stensor$", input.guid));
+        if (tb_op->op_type == type::TB_SQRT_OP) {
+          code.e("$ = tl.sqrt($.to(tl.float32))",
+                 fmt("stensor$", output.guid),
+                 fmt("stensor$", input.guid));
+        } else {
+          string op_str = operator_type_to_triton(tb_op->op_type);
+          code.e("$ = $($)",
+                 fmt("stensor$", output.guid),
+                 op_str,
+                 fmt("stensor$", input.guid));
+        }
         break;
       }
       case type::TB_SQUARE_OP: {
@@ -519,11 +524,17 @@ TritonCustomOPTranspileResult
         tb::STensor const &input = tb_op->input_tensors.at(0);
         tb::STensor const &output = tb_op->output_tensors.at(0);
 
-        string op_str = operator_type_to_triton(tb_op->op_type);
-        code.e("$ = $($)",
-               fmt("stensor$", output.guid),
-               op_str,
-               fmt("stensor$", input.guid));
+        if (tb_op->op_type == type::TB_SQRT_OP) {
+          code.e("$ = tl.sqrt($.to(tl.float32))",
+                 fmt("stensor$", output.guid),
+                 fmt("stensor$", input.guid));
+        } else {
+          string op_str = operator_type_to_triton(tb_op->op_type);
+          code.e("$ = $($)",
+                 fmt("stensor$", output.guid),
+                 op_str,
+                 fmt("stensor$", input.guid));
+        }
         break;
       }
       case type::TB_SQUARE_OP: {
@@ -533,6 +544,17 @@ TritonCustomOPTranspileResult
                fmt("stensor$", output.guid),
                fmt("stensor$", input.guid),
                fmt("stensor$", input.guid));
+        break;
+      }
+      case type::TB_MUL_SCALAR_OP: {
+        tb::STensor const &input = tb_op->input_tensors.at(0);
+        tb::STensor const &output = tb_op->output_tensors.at(0);
+        tb::TBElementUnaryOp *unary =
+            static_cast<tb::TBElementUnaryOp *>(tb_op);
+        code.e("$ = $ * $",
+               fmt("stensor$", output.guid),
+               fmt("stensor$", input.guid),
+               unary->scalar);
         break;
       }
       case type::TB_ADD_OP:

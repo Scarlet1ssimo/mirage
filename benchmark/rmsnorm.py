@@ -26,7 +26,7 @@ if __name__ == "__main__":
     D = graph.rms_norm(X, normalized_shape=(4096,))
     O = graph.matmul(D, W)
     graph.mark_output(O)
-    optimized_graph = graph.superoptimize(config="mlp", previous_checkpoint=filename, backend=backend, save_codes=save_codes, warmup_iters=warmup_iters, profile_iters=profile_iters)
+    optimized_graph = graph.superoptimize(config="mlp", backend=backend, save_codes=save_codes, warmup_iters=warmup_iters, profile_iters=profile_iters)
 
     input_tensors = [
         torch.randn(2 * batch_size, 4096, dtype=torch.float16, device='cuda:0'),

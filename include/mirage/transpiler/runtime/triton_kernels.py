@@ -39,7 +39,7 @@ def elementwise_unary_kernel(X_ptr, Out_ptr, M: tl.constexpr, N: tl.constexpr, O
     if OP == 1100:
         out = tl.exp(x)
     elif OP == 1102:
-        out = tl.sqrt(x)
+        out = tl.sqrt(x.to(tl.float32)).to(tl.float16)
     elif OP == 1101:
         out = x * x
     else:

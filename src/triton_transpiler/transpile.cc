@@ -301,7 +301,7 @@ TritonTranspileResult TritonTranspiler::transpile_ugraph() {
   CodeKeeper header;
   header.e("import triton");
   header.e("import triton.language as tl");
-  header.e("import triton.ops as ops");
+  // header.e("import triton.ops as ops");
   header.e("import torch");
   header.e("import sys");
   header.e("import os");
@@ -427,7 +427,7 @@ TritonTranspileResult TritonTranspiler::transpile_ugraph() {
         kn::DTensor &input0 = op->input_tensors[0];
         kn::DTensor &input1 = op->input_tensors[1];
         kn::DTensor &output = op->output_tensors[0];
-        std::string new_line = fmt("$ = ops.matmul($, $)",
+        std::string new_line = fmt("$ = torch.matmul($, $)",
                                    fmt("dtensor$", output.guid),
                                    fmt("dtensor$", input0.guid),
                                    fmt("dtensor$", input1.guid));
@@ -440,7 +440,7 @@ TritonTranspileResult TritonTranspiler::transpile_ugraph() {
             output_tensor_names.end()) {
           entrance_func.e(fmt("$.copy_($)",
                               fmt("dtensor$", output.guid),
-                              fmt("ops.matmul($, $)",
+                      fmt("torch.matmul($, $)",
                                   fmt("dtensor$", input0.guid),
                                   fmt("dtensor$", input1.guid))));
         } else {

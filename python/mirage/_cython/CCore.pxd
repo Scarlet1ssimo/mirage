@@ -361,18 +361,26 @@ cdef extern from "mirage/search/search_c.h" namespace "mirage::search_c":
     cdef CppKNGraph *cython_from_json(const char *filename)
 
 cdef extern from "mirage/transpiler/transpile.h" namespace "mirage::transpiler":
+    ctypedef enum TranspileErrorType:
+        CUDA_T_SUCCESS
+        CUDA_T_INSUFFICIENT_SMEM
+        CUDA_T_LAYOUT_ERROR
+        CUDA_T_CONFIG_ERROR
+        CUDA_T_UNKOWN_ERRORS
+
     ctypedef struct TranspilerConfig:
         int target_cc
+        bool profiling
         int num_consumer_wgs
         int num_producer_wgs;
         int pipeline_stages;
-        bool profiling;
         bool enable_online_softmax;
     ctypedef struct OutputTensorDirective:
         size_t alloc_size
         vector[int] shape
         vector[size_t] strides
     ctypedef struct TranspileResult:
+        TranspileErrorType error_type
         string code
         size_t buf_size
         size_t max_smem_size
