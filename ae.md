@@ -105,6 +105,35 @@ From scratch:
 python3 $MIRAGE_ROOT/benchmark/lora.py -b {batch_size}
 ```
 
+#### MHA
+Use cached data with the CUDA backend:
+``` 
+python3 $MIRAGE_ROOT/benchmark/multi_head_attention.py --file $MIRAGE_ROOT/benchmark/saved_mugraphs/mha_bs{batch_size}.json --backend cuda
+```
+
+To replay the CUDA path as a standalone script with configurable shape, run:
+``` 
+python3 $MIRAGE_ROOT/benchmark/multi_head_attention_cuda_replay.py --batch_size 1 --outer_dim 32 --q_len 16 --k_len 4096 --d_model 64 --file $MIRAGE_ROOT/benchmark/saved_mugraphs/mha_bs1.json
+```
+If you change the shape, also pass a matching checkpoint if you have one; otherwise omit `--file` to let Mirage search for the new shape.
+
+You can tune CUDA schedule knobs directly from the standalone script:
+``` 
+python3 $MIRAGE_ROOT/benchmark/multi_head_attention_cuda_replay.py --file $MIRAGE_ROOT/benchmark/saved_mugraphs/mha_bs1.json --pipeline_stages 2 --num_warp_groups 2 --target_cc 90 --file_id 0
+```
+The generated CUDA source is exported to `$MIRAGE_ROOT/generated_codes/{file_id}/test{file_id}.cu`.
+
+To extract Triton code from the cached search results, run:
+``` 
+python3 $MIRAGE_ROOT/benchmark/multi_head_attention.py --file $MIRAGE_ROOT/benchmark/saved_mugraphs/mha_bs1.json --backend triton --save_codes True
+```
+The generated Triton file is written to `$MIRAGE_ROOT/generated_codes/generated_code_0.py`.
+
+To replay the extracted Triton kernel and measure latency without rerunning search, run:
+``` 
+python3 $MIRAGE_ROOT/benchmark/multi_head_attention_triton_replay.py
+```
+
 #### GatedMLP
 Use cached data:
 ```

@@ -681,6 +681,24 @@ class KNGraph:
                 print("muGraph {}: profiled performance (ms) = {}".format(idx, perf))
                 if perf < best_perf:
                     best_graph, best_perf = g, perf
+            if save_codes and best_graph is not None:
+                dtensors = best_graph.cygraph.get_input_dtensors()
+                input_tensors = list()
+                for t in dtensors:
+                    dims, strides = best_graph.cygraph.get_input_dtensor_shape_and_stride(
+                        t
+                    )
+                    dtype = convert_dtype_to_torch_type(t.dtype)
+                    x = torch.randn(
+                        dims,
+                        dtype=dtype,
+                        device="cuda:{}".format(global_config.gpu_device_id),
+                    )
+                    x = torch.as_strided(x, size=dims, stride=strides)
+                    input_tensors.append(x)
+                best_graph._is_compiled = False
+                best_graph._cached_results = None
+                best_graph.compile(inputs=input_tensors, file_id=0, target_cc=target_cc)
             best_graph.backend = "cuda"
             if use_graph_dataset:
                 graph_dataset.store(

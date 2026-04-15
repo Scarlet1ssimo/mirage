@@ -70,6 +70,7 @@ if __name__ == "__main__":
             final_code = '\n'.join(header_code) + '\n'.join(kernel_code) + run_kernel_code
             
             if self.save_codes:
+                os.makedirs("generated_codes", exist_ok=True)
                 with open(f"generated_codes/generated_code_{self.cnt}.py", "w") as _f:
                     _f.write(final_code)
             f.write(final_code)

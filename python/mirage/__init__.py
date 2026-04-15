@@ -1,11 +1,20 @@
 import os
+import ctypes
 
 try:
     from .core import *
 except ImportError:
     import z3
     _z3_lib = os.path.join(os.path.dirname(z3.__file__), 'lib')
-    os.environ['LD_LIBRARY_PATH'] = f"{_z3_lib}:{os.environ.get('LD_LIBRARY_PATH','LD_LIBRARY_PATH')}"
+    _z3_candidates = [
+        os.path.join(_z3_lib, 'libz3.so.4.16'),
+        os.path.join(_z3_lib, 'libz3.so'),
+    ]
+    for _z3_path in _z3_candidates:
+        if os.path.exists(_z3_path):
+            ctypes.CDLL(_z3_path, mode=ctypes.RTLD_GLOBAL)
+            break
+    os.environ['LD_LIBRARY_PATH'] = f"{_z3_lib}:{os.environ.get('LD_LIBRARY_PATH', '')}"
     
     from .core import *
 

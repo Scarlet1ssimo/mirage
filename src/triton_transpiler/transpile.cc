@@ -418,8 +418,8 @@ TritonTranspileResult TritonTranspiler::transpile_ugraph() {
         kn::DTensor &output = op->output_tensors[0];
         std::string new_line = fmt("$ = ops.matmul($, $)",
                                    fmt("dtensor$", output.guid),
-                                   fmt("dtensor$", input0.guid),
-                                   fmt("dtensor$", input1.guid));
+                   fmt("dtensor$", input0.guid),
+                   fmt("dtensor$", input1.guid));
         exec.e(new_line);
         // if output of this op is in output_tensor_names
         // we should use .copy_() to copy the result back

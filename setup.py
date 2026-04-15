@@ -56,13 +56,13 @@ def config_cython():
                               path.join(mirage_path, "deps", "json", "include"),
                               path.join(mirage_path, "deps", "cutlass", "include"),
                               path.join(z3_path, "include"),
-                              "/usr/local/cuda/include"],
+                              "/software/cuda-12.8/include"],
                 libraries=["mirage_runtime", "cudadevrt", "cudart_static", "cudnn", "cublas", "cudart", "cuda", "z3", "gomp", "rt"],
                 library_dirs=[path.join(mirage_path, "build"),
                               path.join(z3_path, "lib"),
-                              "/usr/local/cuda/lib",
-                              "/usr/local/cuda/lib64",
-                              "/usr/local/cuda/lib64/stubs"],
+                              "/software/cuda-12.8/lib",
+                              "/software/cuda-12.8/lib64",
+                              "/software/cuda-12.8/lib64/stubs"],
                 extra_compile_args=["-std=c++17", "-fopenmp"],
                 extra_link_args=["-fPIC", "-fopenmp"],
                 language="c++"))
@@ -74,7 +74,7 @@ def config_cython():
 # build Mirage runtime library
 try:
     nvcc_path = shutil.which('nvcc')
-    os.environ['CUDACXX'] = nvcc_path if nvcc_path else '/usr/local/cuda/bin/nvcc'
+    os.environ['CUDACXX'] = nvcc_path if nvcc_path else '/software/cuda-12.8/bin/nvcc'
     mirage_path = path.dirname(__file__)
     # z3_path = os.path.join(mirage_path, 'deps', 'z3', 'build')
     # os.environ['Z3_DIR'] = z3_path
