@@ -1,0 +1,13 @@
+在这台已有 Forest 和 XLA 的 H100 环境复现 Mirage academic superoptimizer。
+
+拉取 git@github.com:Scarlet1ssimo/mirage.git 的 codex/reproduce-superoptimizer 分支，读 benchmark/REPRODUCE_SUPEROPTIMIZER.md，使用 benchmark/reproduce_superoptimizer.py。不要切到 MPK，不改搜索规则或 cost model，不重写 Forest/XLA 的输入、reference 或计时协议。
+
+先确认我分配给实验的 H100 GPU IDs，只用这些卡。找到现有 Forest 根目录与 XLA fixture 根目录（inputs.npz/reference.npy/settings.json）；沿用 Forest 默认五个 workload × B=1/16，共10个case，Attention用当前native MHA。若没有相应fixture，用现有XLA脚本产生相同shape、seed1729的fixture。
+
+用 module avail / module load 获取 nvcc，沿用现有软件环境。构建Mirage时设置 MIRAGE_CUDA_ARCHITECTURES=90；只在必要时修正fork里CUDA include/library安装路径，不改算法。脚本运行时自动识别SM90。
+
+先测 Forest suite 的 fresh search（开启 --fold-zero-epsilon --allow-invalid-output），再分别测 AE suite 的 ordinary cache、hopper cache 和 fresh search。每轮写新的输出目录。缺少cache如Hopper MHA应明确记缺失，不静默换batch或换cache；AE的MHA B=8、RMSNorm单Matmul、GatedMLP固定8行需要单独标注，不能伪装成Forest完整workload。
+
+保持 seed1729、do_bench、flush L2、warmup10、测量200ms；search180s、candidate180s、case600s，保留失败和超时日志。NaN/Inf/误差超标也要测速和汇报数字（--allow-invalid-output），但只有计时前后数值验证通过的候选可以记为validated winner。先使用CUDA；有时间再用Triton，谁能运行就报告谁。可另测--fp32-accum，但明确是生成代码适配，且不能把不支持的Hopper WGMMA写成已适配。
+
+最终汇报原始10行CSV、AE各shape/cache/fresh的性能、validated与fastest_timed两列、数值失败状态、failure distribution、GPU型号/功耗cap/计时功耗样本/软件版本、每个候选的IR/code/tuning及搜索预算。把产物路径和实际运行命令给我，不要只报通过验证的数字。

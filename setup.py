@@ -97,8 +97,9 @@ try:
                            '-DZ3_LIBRARIES=' + path.join(z3_path, 'lib', 'libz3.so'),
                            '-DCMAKE_C_COMPILER=' + os.environ['CC'],
                            '-DCMAKE_CXX_COMPILER=' + os.environ['CXX'],
+                           '-DMIRAGE_CUDA_ARCHITECTURES=' + os.environ.get('MIRAGE_CUDA_ARCHITECTURES', '70;75;80;86;89;90'),
                           ], cwd=build_dir, env=os.environ.copy())
-    subprocess.check_call(['make', '-j'], cwd=build_dir, env=os.environ.copy())
+    subprocess.check_call(['make', '-j8'], cwd=build_dir, env=os.environ.copy())
     print("Mirage runtime library built successfully.")
 except subprocess.CalledProcessError as e:
     print("Failed to build runtime library.")

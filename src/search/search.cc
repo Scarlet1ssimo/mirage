@@ -9,6 +9,7 @@
 #include "mirage/utils/containers.h"
 #include "mirage/utils/json_utils.h"
 
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <thread>
@@ -512,7 +513,12 @@ bool KernelGraphGenerator::verify(kernel::Graph &g) {
 
     auto save_graph = [&]() {
 #pragma omp critical
-      { generated_graphs.push_back(json(g)); }
+      {
+        generated_graphs.push_back(json(g));
+        // Preserve verified candidates when a bounded experiment is interrupted.
+        // This runs under the existing OpenMP critical section.
+        save_results();
+      }
     };
 
     OutputMatch match = verifier->verify(g);
@@ -529,8 +535,14 @@ bool KernelGraphGenerator::verify(kernel::Graph &g) {
 }
 
 void KernelGraphGenerator::save_results() const {
-  std::ofstream ofs(filename);
+  // A timeout may interrupt writing; keep the previous complete checkpoint.
+  std::string temporary = std::string(filename) + ".tmp";
+  std::ofstream ofs(temporary);
   ofs << json(generated_graphs);
+  ofs.close();
+  if (!ofs || std::rename(temporary.c_str(), filename) != 0) {
+    std::cerr << "Could not save search checkpoint: " << filename << std::endl;
+  }
 }
 
 double KernelGraphGenerator::get_elapsed_time_in_sec() const {

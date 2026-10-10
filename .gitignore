@@ -52,3 +52,7 @@ wheelhouse/
 demo/mirage_search_checkpoint.json
 demo/*generated*
 benchmark/*generated*
+
+# Local superoptimizer reproduction outputs / isolated compatibility installs
+/outputs/
+/.triton-legacy/
