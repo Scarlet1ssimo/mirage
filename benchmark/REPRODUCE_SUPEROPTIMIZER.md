@@ -12,7 +12,7 @@ MPK is not used.
 Use the existing CUDA/PyTorch environment and Forest/XLA checkouts. Run from the
 Mirage repository. The tested A100 environment was Python 3.10.21,
 Torch 2.7.0+cu126, upstream Triton 3.3.0, nvcc 12.8.61, z3-solver 4.16.0.0.
-The worker detects SM80/SM90 from the selected GPU. H100 has not been tested here.
+The worker detects SM80/SM90 from the selected GPU. H100 NVL has also been tested with Python 3.14, Torch 2.14.0+cu130 and nvcc 12.8.
 
 ```bash
 # Load the CUDA module available on your machine; module name is site-specific.
@@ -36,7 +36,8 @@ bounded search can be stopped without losing completed candidates.
 ## Original Forest shapes: ten cases
 
 `--forest-root` must contain `benchmarks/src/forest_benchmarks/timing.py` and
-`codegen/src/forest/codegen/numerics.py`. `--fixture-dir` is an existing XLA output
+`support/src/forest/support/numerics.py` (or the older
+`codegen/src/forest/codegen/numerics.py`). `--fixture-dir` is an existing XLA output
 root with `<case>/B{1,16}/inputs.npz`, `reference.npy`, and `settings.json`.
 The case folders are `attention`, `gqa-attention`, `layernorm-matmul`,
 `rms-ffn-swiglu`, and `efficient-vit`. Use fixtures with the same seed and shapes
@@ -124,9 +125,22 @@ failures remain in the report. CUDA is sufficient for the primary reproduction.
 ## Protocol and artifacts
 
 Defaults: seed 1729, explicit warmup 10, `do_bench` with L2 flushing and 200ms
-measurement, thermal cooldown, search threads 8, search 180s, each candidate
-180s, and each case 600s. Change budgets with `--search-budget-s`,
-`--candidate-budget-s`, and `--case-budget-s`; the case budget includes search.
+measurement, thermal cooldown, search threads 8, and **no search, candidate,
+or case time limits**. Fresh search runs to completion and every discovered
+candidate is compiled and evaluated unless an explicit subset is requested.
+Do not pass budget flags for the H100/A100 comparison. Optional bounded
+diagnostic runs can use `--search-budget-s`, `--candidate-budget-s`, and
+`--case-budget-s`; each omitted limit is unlimited and an explicit case limit
+also includes search. A limited run must be labeled separately, and timeout
+results must not be reported as an exhaustive search. Ctrl-C remains supported.
+
+Each worker records `phase_times_s`: `search` is discovery, `compile` is
+CUDA generation + nvcc + module loading (and scratch/output setup),
+`load_inputs` is input/reference preparation, `validation` is correctness, and
+`measure` includes warmup/cooldown/final timing and post-validation. The Forest
+phase report further splits cooldown and final measurement. Case wall time
+includes all candidates and is not compilation time. Old results without
+`phase_times_s` cannot recover pure compilation time exactly.
 CUDA uses preallocated scratch/output and default pipeline stages=2,
 warp groups=2. Alternative settings are explicit CLI options, not an additional
 autotuning sweep. The fastest result is only the fastest among timed candidates.
@@ -153,3 +167,17 @@ The worker records numerical metrics before and after timing. Without
 failed output is labeled `measured_invalid`; error entries are JSON null for
 NaN/Inf, never zero. Numerical thresholds remain relative L2 <0.005 and
 normalized maximum error <0.02.
+
+## Shared-shape H100/A100 comparison
+
+For the six-row intersection, provide fixtures with MHA H=32, M=16, N=4096,
+D=L=64, B=1/8; GQA G=2, R=16, M=16, N=4096, D=L=64, B=1/16;
+EfficientViT N=D=E=128, B=1/16. Use `--suite forest` so all three
+implementations use the Forest formulas, including attention scaling.
+The worker reads attention dimensions from fixture settings. Run MHA separately
+with `--cases attention --batch-sizes 1 8`, GQA with `--cases gqa --batch-sizes
+1 16`, and EVT with `--cases efficient_vit --batch-sizes 1 16`. Use fresh
+output directories, CUDA, `--fold-zero-epsilon --allow-invalid-output`, and
+no budget or candidate-subset flags. Invalid timed candidates remain separate
+from validated winners. Historical 180/180/600-second results were bounded
+runs; retain them separately rather than overwriting their artifacts.

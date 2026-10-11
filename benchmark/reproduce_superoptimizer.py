@@ -259,6 +259,12 @@ def summarize(output):
     return rows
 
 
+def minimum_budget(*budgets):
+    """None means unlimited; a finite enclosing limit still applies."""
+    finite = [budget for budget in budgets if budget is not None]
+    return min(finite) if finite else None
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--suite", choices=["forest", "ae"], default="forest")
@@ -323,9 +329,18 @@ def main():
         type=Path,
         help="Optional isolated Triton 2.3.1 --target directory",
     )
-    p.add_argument("--search-budget-s", type=float, default=180)
-    p.add_argument("--candidate-budget-s", type=float, default=180)
-    p.add_argument("--case-budget-s", type=float, default=600)
+    p.add_argument(
+        "--search-budget-s", type=float, default=None,
+        help="Optional search limit in seconds; default: unlimited",
+    )
+    p.add_argument(
+        "--candidate-budget-s", type=float, default=None,
+        help="Optional candidate limit in seconds; default: unlimited",
+    )
+    p.add_argument(
+        "--case-budget-s", type=float, default=None,
+        help="Optional whole-case limit in seconds; default: unlimited",
+    )
     a = p.parse_args()
     allowed = FOREST_CASES if a.suite == "forest" else AE_CASES
     cases = a.cases or allowed
@@ -338,10 +353,10 @@ def main():
     ):
         p.error("Duplicate cases or batch sizes")
     if any(
-        not math.isfinite(v) or v <= 0
+        v is not None and (not math.isfinite(v) or v <= 0)
         for v in (a.search_budget_s, a.candidate_budget_s, a.case_budget_s)
     ):
-        p.error("Time budgets must be finite and positive")
+        p.error("Explicit time budgets must be finite and positive")
     if (
         a.max_candidates < 0
         or a.batch_sizes
@@ -366,8 +381,8 @@ def main():
         p.error(
             "--forest-root must contain the existing Forest benchmark timing implementation"
         )
-    if a.source == "cache" and a.suite != "ae":
-        p.error("Provided caches have AE shapes; Forest suite must use fresh or direct")
+    if a.source == "cache" and a.suite != "ae" and a.cache_dir is None:
+        p.error("Provided caches have AE shapes; Forest cache replay requires an explicit --cache-dir")
     a.source = (
         ("fresh" if a.suite == "forest" else "cache")
         if a.source == "auto"
@@ -565,7 +580,7 @@ def main():
                 ["--mode", mode],
                 directory / mode,
                 device,
-                min(a.search_budget_s, a.case_budget_s),
+                minimum_budget(a.search_budget_s, a.case_budget_s),
                 case,
             )
             case["status"] = result.get("status", "failed")
@@ -611,8 +626,8 @@ def main():
                 candidate = directory / f"candidate-{index}.json"
                 write_json(candidate, graphs[index])
                 for backend in a.backends:
-                    left = a.case_budget_s - (time.monotonic() - begin)
-                    if left < 1 or stopped.is_set():
+                    left = None if a.case_budget_s is None else a.case_budget_s - (time.monotonic() - begin)
+                    if (left is not None and left <= 0) or stopped.is_set():
                         break
                     result = launch(
                         [
@@ -625,14 +640,14 @@ def main():
                         ],
                         directory / f"{backend}-{index}",
                         device,
-                        min(a.candidate_budget_s, left),
+                        minimum_budget(a.candidate_budget_s, left),
                         case,
                     )
                     result["candidate_index"] = index
                     write_json(directory / f"{backend}-{index}" / "result.json", result)
                     attempted.add(index)
                     case["status"] = result.get("status", "failed")
-                if time.monotonic() - begin >= a.case_budget_s:
+                if a.case_budget_s is not None and time.monotonic() - begin >= a.case_budget_s:
                     break
             case["attempted_candidates"] = len(attempted)
             case["candidate_prefix_truncated"] = len(attempted) < len(graphs)

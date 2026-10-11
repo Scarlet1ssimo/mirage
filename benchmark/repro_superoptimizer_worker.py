@@ -27,6 +27,8 @@ p.add_argument("--candidate", type=Path)
 p.add_argument("--directory", type=Path, required=True)
 a = p.parse_args()
 a.directory.mkdir(parents=True, exist_ok=True)
+import shutil
+shutil.copy2(Path(__file__), a.directory / "worker-source.py")
 os.chdir(a.directory)
 
 if a.backend == "triton" and a.triton_path:
@@ -56,11 +58,12 @@ for name, path in [("forest_benchmarks", ROOT / "benchmarks/src/forest_benchmark
     m = types.ModuleType(name)
     m.__path__ = [str(path)]
     sys.modules[name] = m
-from forest_benchmarks.timing import measure
+from forest_benchmarks.timing import measure, DEFAULT_COOLDOWN_S
 
-spec = importlib.util.spec_from_file_location(
-    "numerics", ROOT / "codegen/src/forest/codegen/numerics.py"
-)
+numerics_path = ROOT / "support/src/forest/support/numerics.py"
+if not numerics_path.exists():
+    numerics_path = ROOT / "codegen/src/forest/codegen/numerics.py"
+spec = importlib.util.spec_from_file_location("numerics", numerics_path)
 num = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(num)
 torch.set_grad_enabled(False)
@@ -78,6 +81,7 @@ if target_cc not in (80, 90) or target_cc > physical_cc:
 start = time.monotonic()
 r = {
     "status": "running",
+    "worker_sha256": hashlib.sha256((a.directory / "worker-source.py").read_bytes()).hexdigest(),
     "allow_invalid_output": a.allow_invalid_output,
     "core_sha256": hashlib.sha256(Path(mc.__file__).read_bytes()).hexdigest(),
     "stage": "graph",
@@ -111,12 +115,23 @@ r = {
 meta = []
 
 
+phase_started = start
+phase_completed = {}
+
+
 def save():
-    r["elapsed_s"] = time.monotonic() - start
+    now = time.monotonic()
+    r["elapsed_s"] = now - start
+    r["phase_times_s"] = {**phase_completed, r["stage"]: phase_completed.get(r["stage"], 0) + now - phase_started}
     write_json(a.directory / "result.json", r)
 
 
 def stage(s):
+    global phase_started
+    now = time.monotonic()
+    previous = r["stage"]
+    phase_completed[previous] = phase_completed.get(previous, 0) + now - phase_started
+    phase_started = now
     r["stage"] = s
     save()
     print("STAGE", s, flush=True)
@@ -143,15 +158,25 @@ def rms(g, x, d):
     return g.div(x, g.sqrt(g.div(g.reduction(g.square(x), x.num_dims - 1), count)))
 
 
+def forest_attention_shape():
+    folder = FIX / ('gqa-attention' if a.case == 'gqa' else 'attention') / f'B{a.B}'
+    settings = json.loads((folder / 'settings.json').read_text())
+    dims = settings['problem']['dimensions']
+    groups = dims['H'] if a.case == 'attention' else dims['G']
+    rows = dims['M'] * (1 if a.case == 'attention' else dims['R'])
+    if dims['D'] != dims['L']:
+        raise ValueError('This reproduction adapter requires D=L')
+    r['semantic_shape'] = dims
+    r['semantics'] = 'Forest scaled noncausal attention, canonical BHSD inputs; metadata views only'
+    return a.B * groups, rows, dims['D'], dims['N']
+
+
 def graph():
     g = mi.new_kernel_graph()
     b = a.B
     if a.case in ("attention", "gqa"):
         if a.shape == "forest":
-            outer = b * (32 if a.case == "attention" else 8)
-            m = 4096 * (1 if a.case == "attention" else 4)
-            d = 128
-            n = 4096
+            outer, m, d, n = forest_attention_shape()
         else:
             outer = b * (32 if a.case == "attention" else 2)
             m = 16 if a.case == "attention" else 256
@@ -241,17 +266,16 @@ def tensors_and_reference():
             ]
         ref = torch.from_numpy(np.load(folder / "reference.npy")).cuda()
         if a.case in ("attention", "gqa"):
-            outer = a.B * (32 if a.case == "attention" else 8)
-            m = 4096 * (1 if a.case == "attention" else 4)
+            outer, m, d, n = forest_attention_shape()
             xs = [
-                xs[0].view(outer, m, 128),
-                xs[1].view(outer, 4096, 128).transpose(-1, -2),
-                xs[2].view(outer, 4096, 128),
+                xs[0].view(outer, m, d),
+                xs[1].view(outer, n, d).transpose(-1, -2),
+                xs[2].view(outer, n, d),
                 torch.full(
-                    (1, 1, 1), math.sqrt(128), dtype=torch.float16, device="cuda"
+                    (1, 1, 1), math.sqrt(d), dtype=torch.float16, device="cuda"
                 ),
             ]
-            ref = ref.view(outer, m, 128)
+            ref = ref.view(outer, m, d)
         elif a.case == "layernorm_matmul":
             xs.append(torch.full((1, 1), -1 / 8192, dtype=torch.float16, device="cuda"))
             if a.decompose_norm:
@@ -468,6 +492,17 @@ try:
                 "output_shapes": res["output_shapes"],
                 "buffer_policy": "outputs preallocated, intermediates as emitted by Mirage",
             }
+        r["output_layout"] = {"shape": list(out[0].shape), "strides": list(out[0].stride()), "contiguous": out[0].is_contiguous()}
+        if not out[0].is_contiguous():
+            native_output = out[0]
+            out[0] = torch.empty(native_output.shape, device="cuda", dtype=native_output.dtype)
+            native_run = run
+            def run():
+                native_run()
+                out[0].copy_(native_output)
+            r["output_layout_adapter"] = "contiguous copy included in timed call"
+        else:
+            r["output_layout_adapter"] = "none"
         stage("validation")
         run()
         torch.cuda.synchronize()
@@ -481,7 +516,7 @@ try:
             run,
             warmup=10,
             benchmark_ms=200,
-            cooldown_s=5,
+            cooldown_s=DEFAULT_COOLDOWN_S,
             device=torch.device("cuda:0"),
             cooldown_report=r["cooldown"],
             phase_directory=a.directory,

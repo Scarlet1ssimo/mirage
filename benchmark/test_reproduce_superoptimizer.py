@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from reproduce_superoptimizer import select, summarize, write_json
+from reproduce_superoptimizer import minimum_budget, select, summarize, write_json
 
 
 def observation(latency, valid, status=None):
@@ -20,6 +20,12 @@ def observation(latency, valid, status=None):
 
 
 class ReproductionChecks(unittest.TestCase):
+    def test_unlimited_and_explicit_enclosing_budgets(self):
+        self.assertIsNone(minimum_budget(None, None))
+        self.assertEqual(minimum_budget(None, 25), 25)
+        self.assertEqual(minimum_budget(40, None), 40)
+        self.assertEqual(minimum_budget(40, 25), 25)
+
     def test_fastest_invalid_does_not_replace_validated_winner(self):
         bad, good = observation(1, False), observation(2, True)
         winner, fastest = select([bad, good])
